@@ -8,3 +8,4 @@ numpy
 gunicorn
 google-generativeai
 python-dotenv
+python-multipart
