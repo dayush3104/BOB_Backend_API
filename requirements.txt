@@ -26,7 +26,9 @@ pandas
 #Optional: For enhanced performance (uncomment if needed)
 numba
 opencv-contrib-python
-Development dependencies (optional)
+
+#Development dependencies (optional)
 pytest
 black
 flake8
+
