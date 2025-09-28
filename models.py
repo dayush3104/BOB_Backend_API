@@ -16,4 +16,10 @@ class Edge(BaseModel):
 class VerificationPayload(BaseModel):
     challenge_code: str
     spoken_text: str
+
     head_pose_trace: List[Tuple[float, float]]
+
+
+class RhythmPayload(BaseModel):
+    user_id: str
+    timings: List[float] # A list of time intervals between keystrokes in ms
