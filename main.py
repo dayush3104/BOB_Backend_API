@@ -1,23 +1,20 @@
-# main.py
+# main.py - FINAL VERSION
 
 import random
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
-# Import all models
-from models import Node, Edge, VerificationPayload
-
-# Import the graph manager
+from models import Node, Edge, VerificationPayload, RhythmPayload # Make sure all models are imported
 from graph_manager import graph_db
 
 app = FastAPI(
-    title="BoB Kavach - Upgraded Prototype API",
-    version="2.0.0"
+    title="BoB Kavach - Final Prototype API",
+    version="3.0.0"
 )
 
-# --- CORS Middleware (Crucial for frontend-backend communication) ---
+# --- CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,79 +23,88 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- In-memory store for our new challenges ---
+# === In-memory Databases for the Prototype ===
 challenges_db = {}
-# Lists of emotions and phrases for the new challenge
+# This will store the "normal" typing rhythm for users. In a real app, use a proper database.
+user_rhythm_profiles = {} 
+
+# --- Lists for VKYC Challenge ---
 EMOTIONS = ["Happy", "Surprised"]
 PHRASES = [
     "Bank of Baroda provides secure banking",
     "Digital safety is our top priority",
-    "My identity is secure with this technology",
-    "I am completing my video verification"
+    "My identity is secure with this technology"
 ]
 
-# === Upgraded VKYC Endpoints ===
+@app.get("/", tags=["Root"])
+def read_root():
+    return {"message": "Welcome to the BoB Kavach API. Go to /docs for documentation."}
 
+# === VKYC Endpoints ===
 @app.get("/vkyc/challenge", tags=["VKYC"])
 def get_vkyc_challenge():
-    """
-    Generates a new, more advanced Emotion & Text challenge.
-    """
     challenge_id = str(random.randint(10000, 99999))
-    challenge = {
-        "emotion": random.choice(EMOTIONS),
-        "phrase": random.choice(PHRASES)
-    }
+    challenge = {"emotion": random.choice(EMOTIONS), "phrase": random.choice(PHRASES)}
     challenges_db[challenge_id] = challenge
     return {"challenge_id": challenge_id, "challenge": challenge}
 
 @app.post("/vkyc/verify", tags=["VKYC"])
 def verify_vkyc_challenge(payload: Dict[str, Any]):
-    """
-    Verifies the user's response to the Emotion & Text challenge.
-    We are using a flexible Dict for the payload to accept blendshape data.
-    """
     challenge_id = payload.get("challenge_id")
     if not challenge_id or challenge_id not in challenges_db:
         raise HTTPException(status_code=400, detail="Invalid or expired challenge ID.")
-
     expected = challenges_db.pop(challenge_id)
     
-    # 1. Verify the spoken phrase (using a similarity check)
     spoken_phrase = payload.get("spoken_phrase", "").lower().strip()
     expected_phrase = expected["phrase"].lower().strip()
-    # A simple check for this prototype: check if more than 70% of words match
     spoken_words = set(spoken_phrase.split())
     expected_words = set(expected_phrase.split())
     common_words = spoken_words.intersection(expected_words)
     phrase_correct = (len(common_words) / len(expected_words)) > 0.7
 
-    # 2. Verify the facial emotion using blendshapes from MediaPipe
     blendshapes = payload.get("blendshapes", {})
     emotion_correct = False
-    
-    # This is a simplified, rule-based emotion classifier perfect for a prototype
-    if expected["emotion"] == "Happy":
-        # A "Happy" face usually involves smiling
-        if blendshapes.get("mouthSmileLeft", 0) > 0.4 and blendshapes.get("mouthSmileRight", 0) > 0.4:
-            emotion_correct = True
-    elif expected["emotion"] == "Surprised":
-        # A "Surprised" face usually involves open eyes and a slightly open mouth
-        if blendshapes.get("eyeWideLeft", 0) > 0.3 and blendshapes.get("eyeWideRight", 0) > 0.3 and blendshapes.get("jawOpen", 0) > 0.2:
-            emotion_correct = True
+    if expected["emotion"] == "Happy" and blendshapes.get("mouthSmileLeft", 0) > 0.4 and blendshapes.get("mouthSmileRight", 0) > 0.4:
+        emotion_correct = True
+    elif expected["emotion"] == "Surprised" and blendshapes.get("eyeWideLeft", 0) > 0.3 and blendshapes.get("jawOpen", 0) > 0.2:
+        emotion_correct = True
             
-    # 3. Final Decision
     if phrase_correct and emotion_correct:
         return {"status": "Success", "message": "Verification successful!"}
     else:
-        return {
-            "status": "Failed",
-            "message": "Liveness check failed. Please try again.",
-            "details": {
-                "phrase_matched": phrase_correct,
-                "emotion_matched": emotion_correct,
-            }
+        return {"status": "Failed", "message": "Liveness check failed.", "details": {"phrase_matched": phrase_correct, "emotion_matched": emotion_correct}}
+
+# === NEW: Session Rhythm Analysis Endpoint ===
+@app.post("/analyze-rhythm", tags=["Session Analysis"])
+def analyze_typing_rhythm(payload: RhythmPayload):
+    user_id = payload.user_id
+    timings = payload.timings
+    
+    if not timings:
+        raise HTTPException(status_code=400, detail="No timing data provided.")
+    
+    current_avg_timing = np.mean(timings)
+
+    # If we have no profile for this user, we create one. This is their "normal" rhythm.
+    if user_id not in user_rhythm_profiles:
+        user_rhythm_profiles[user_id] = {
+            "mean": current_avg_timing,
+            "std_dev": np.std(timings) if len(timings) > 1 else 30  # Default std dev
         }
+        return {"status": "Profile Created", "message": "User's normal typing rhythm has been saved."}
+    
+    # If a profile exists, we compare the current rhythm to their normal one.
+    profile = user_rhythm_profiles[user_id]
+    mean = profile["mean"]
+    std_dev = profile["std_dev"]
+
+    # Calculate Z-score: how many standard deviations away is this attempt?
+    z_score = abs((current_avg_timing - mean) / (std_dev or 1))
+    
+    if z_score < 2.0: # If it's within 2 standard deviations, it's considered normal.
+        return {"status": "Rhythm Matched", "z_score": z_score}
+    else:
+        return {"status": "Rhythm Mismatch", "z_score": z_score, "message": "Warning: Typing rhythm is abnormal."}
 
 # === Fraud Ring Endpoints (Unchanged) ===
 @app.post("/nodes", tags=["Graph Management"])
